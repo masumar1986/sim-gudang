@@ -7,10 +7,22 @@
   const TIMEOUT_MS = 60000;
   const cfg = () => g.SIM_CONFIG || {};
 
-  function isConfigured() {
-    const u = String(cfg().API_URL || '').trim();
-    return u.indexOf('https://script.google.com/') === 0 && /\/exec$/.test(u) && u.indexOf('PASTE') < 0;
+  /** Bersihkan salah-ketik umum: spasi, tanda kutip nyasar, garis miring di ujung. */
+  function apiUrl() { return String(cfg().API_URL || '').trim().replace(/^["'`\s]+|["'`\s]+$/g, '').replace(/\/+$/, ''); }
+
+  /** null bila alamat benar; bila salah, kembalikan { judul, detail, nilai } agar pesan di layar spesifik. */
+  function configProblem() {
+    const raw = String(cfg().API_URL || ''), u = apiUrl();
+    if (!u || u.indexOf('PASTE') >= 0) return { judul: 'Alamat backend belum diisi.', detail: 'Buka berkas js/config.js, tempel URL Apps Script (berakhiran /exec), lalu simpan dan push ke GitHub.', nilai: '' };
+    const nilai = raw.length > 90 ? raw.slice(0, 90) + '...' : raw;
+    if (u.indexOf('https://') !== 0) return { judul: 'Alamat backend tidak valid.', detail: 'Harus diawali https://script.google.com/', nilai };
+    if (u.indexOf('https://script.google.com/') !== 0) return { judul: 'Bukan alamat Apps Script.', detail: 'Alamat harus diawali https://script.google.com/macros/s/ ... /exec', nilai };
+    if (/\/dev$/.test(u)) return { judul: 'Ini alamat uji (/dev), bukan alamat publik.', detail: 'Pakai URL berakhiran /exec dari Deploy > Manage deployments.', nilai };
+    if (/\/home\/|\/projects\//.test(u)) return { judul: 'Ini alamat editor Apps Script, bukan Web App.', detail: 'Pakai URL Web app berakhiran /exec dari Deploy > Manage deployments.', nilai };
+    if (!/\/exec$/.test(u)) return { judul: 'Alamat backend harus berakhiran /exec.', detail: 'Mungkin tersalin terpotong atau ada tambahan di ujungnya. Salin ulang dari Deploy > Manage deployments.', nilai };
+    return null;
   }
+  function isConfigured() { return configProblem() === null; }
 
   async function readJson(res) {
     const text = await res.text();
@@ -24,7 +36,7 @@
   }
 
   async function request(url, init) {
-    if (!isConfigured()) throw new Error('Alamat backend belum diisi. Buka js/config.js lalu tempel URL /exec dari Apps Script.');
+    const prob = configProblem(); if (prob) throw new Error(prob.judul + ' ' + prob.detail);
     const ctl = new AbortController();
     const timer = setTimeout(() => ctl.abort(), TIMEOUT_MS);
     try {
@@ -39,7 +51,7 @@
 
   /** Panggil aksi API. Mengembalikan objek { success, data, message, expired? } apa adanya. */
   g.gasPost = function (action, token, args) {
-    return request(cfg().API_URL, {
+    return request(apiUrl(), {
       method: 'POST',
       headers: { 'Content-Type': 'text/plain;charset=utf-8' },
       body: JSON.stringify({ action: action, token: token || '', args: args || [] })
@@ -47,7 +59,8 @@
   };
   /** GET hanya untuk ping dan publicConfig (tanpa data sensitif). */
   g.gasGet = function (action) {
-    return request(cfg().API_URL + '?action=' + encodeURIComponent(action), { method: 'GET' });
+    return request(apiUrl() + '?action=' + encodeURIComponent(action), { method: 'GET' });
   };
   g.isConfigured = isConfigured;
+  g.configProblem = configProblem;
 })(window);

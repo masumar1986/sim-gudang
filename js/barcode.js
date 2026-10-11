@@ -260,70 +260,87 @@
   const origOpenMasuk = window.openMasukForm;
   window.openMasukForm = function () { origOpenMasuk.apply(this, arguments); decorateMasukForm(); };
 
-  // ───────── Barang Keluar: verifikasi scan & scan cepat ─────────
-  function setVerify(ok, text) {
-    const s = $('bkStatus'), k = $('kOk'); if (!s) return;
-    s.className = 'chip ' + (ok === true ? 'ok' : ok === false ? 'bad' : 'warn'); s.textContent = text;
-    if (k) k.disabled = (ok === false) && !($('bkOv') && $('bkOv').checked);
-    const ov = $('bkOvWrap'); if (ov) ov.style.display = ok === false ? '' : 'none';
-  }
-  function decorateKeluarForm(id) {
-    const body = $('appModalBody'), req = (AppState.cache.req || {})[id]; if (!body || !req || $('bkIn')) return;
+  // ───────── Barang Keluar: verifikasi scan per barang & scan cepat ─────────
+  const chipHtml = ok => ok ? '<span class="chip ok">✓ Cocok</span>' : '';
+  function decorateKeluarDok(noDok) {
+    const body = $('appModalBody'), g = (AppState.cache.siap || {})[noDok]; if (!body || !g || $('bkIn')) return;
     body.insertAdjacentHTML('afterbegin', '<div class="card-x mb-3"><div class="card-b"><div class="d-flex align-items-center justify-content-between mb-2"><b><i class="bi bi-upc-scan"></i> Verifikasi barcode</b><span id="bkStatus" class="chip warn">Belum discan</span></div>' +
-      scanBox('bk') + '<label id="bkOvWrap" class="d-flex align-items-center gap-2 mt-2" style="font-size:13px"><input type="checkbox" id="bkOv" class="form-check-input mt-0"> Tetap keluarkan walau tidak cocok</label></div></div>');
+      scanBox('bk') + '<label id="bkOvWrap" class="d-flex align-items-center gap-2 mt-2" style="font-size:13px"><input type="checkbox" id="bkOv" class="form-check-input mt-0"> Tetap keluarkan walau ada barcode tidak cocok</label></div></div>');
     $('bkOvWrap').style.display = 'none';
-    $('bkOv').addEventListener('change', () => { if ($('kOk')) $('kOk').disabled = !$('bkOv').checked; });
-    const want = norm(req.Kode);
+    const rows = () => [].slice.call(document.querySelectorAll('#appModalBody tr[data-kode]'));
+    const done = {}; let salah = false;
+    const lock = () => { const k = $('kOk'); if (!k) return; const n = rows().filter(r => r.querySelector('.kchk').checked).length; if (salah && !$('bkOv').checked) { k.disabled = true; k.dataset.locked = '1'; } else { delete k.dataset.locked; k.disabled = n === 0; } $('bkOvWrap').style.display = salah ? '' : 'none'; };
+    const refresh = () => {
+      const rs = rows(), n = rs.filter(r => done[r.dataset.kode]).length, s = $('bkStatus');
+      if (salah) { s.className = 'chip bad'; s.textContent = '✗ Ada yang tidak cocok'; }
+      else { s.className = 'chip ' + (n === 0 ? 'warn' : n === rs.length ? 'ok' : 'info'); s.textContent = n === 0 ? 'Belum discan' : n === rs.length ? '✓ Semua cocok (' + n + ')' : n + ' dari ' + rs.length + ' cocok'; }
+      lock();
+    };
+    const verify = (r) => {
+      done[r.dataset.kode] = true; r.querySelector('.kv-slot').innerHTML = chipHtml(true);
+      const chk = r.querySelector('.kchk'); if (chk && !chk.disabled && !chk.checked) { chk.checked = true; chk.dispatchEvent(new Event('change', { bubbles: true })); }
+      flash(r);
+    };
+    $('bkOv').addEventListener('change', lock);
+    body.addEventListener('change', e => { if (e.target.id === 'kAll' || (e.target.classList && e.target.classList.contains('kchk'))) lock(); });
     bindScan('bk', raw => {
       const code = norm(raw); if (!code) return;
-      if (code === want) { beep(true); setVerify(true, '✓ Cocok'); say('bk', '<i class="bi bi-check-circle"></i> Barcode sesuai: <b>' + esc(req.Kode) + '</b>', 'ok'); }
-      else { beep(false); setVerify(false, '✗ Tidak cocok'); say('bk', '<i class="bi bi-x-circle"></i> Terscan <b>' + esc(code) + '</b>, seharusnya <b>' + esc(req.Kode) + '</b> (' + esc(req.NamaBarang) + ')', 'bad'); }
+      const r = rows().find(x => norm(x.dataset.kode) === code);
+      if (r) { beep(true); salah = false; verify(r); say('bk', '<i class="bi bi-check-circle"></i> Barcode sesuai: <b>' + esc(r.dataset.kode) + '</b>', 'ok'); }
+      else { beep(false); salah = true; say('bk', '<i class="bi bi-x-circle"></i> Barcode <b>' + esc(code) + '</b> tidak ada dalam dokumen ini', 'bad'); }
+      refresh();
     });
-    if (window.__bcPre === id) { window.__bcPre = null; setVerify(true, '✓ Cocok (scan cepat)'); say('bk', 'Barang sudah diverifikasi lewat scan cepat.', 'ok'); }
-    else setTimeout(() => { const i = $('bkIn'); if (i) i.focus(); }, 150);
+    const pre = window.__bcPre;
+    if (pre && pre.noDok === noDok) {
+      window.__bcPre = null; const r = rows().find(x => norm(x.dataset.kode) === norm(pre.kode));
+      if (r) { verify(r); say('bk', 'Barang diverifikasi lewat scan cepat. Scan barang lain untuk memeriksanya juga.', 'ok'); refresh(); }
+    } else setTimeout(() => { const i = $('bkIn'); if (i) i.focus(); }, 150);
   }
   async function quickIssue(raw) {
     const code = norm(raw); if (!code) return;
     try {
       clearApiCache();   // scan keluar harus memakai data terbaru, bukan cache 45 detik
-      const list = await api('listPermintaan', { status: 'Disetujui' });
-      AppState.cache.req = AppState.cache.req || {}; list.forEach(r => { AppState.cache.req[r.ID] = r; });
-      const hits = list.filter(r => r.Status === 'Disetujui' && norm(r.Kode) === code);
-      if (!hits.length) {
+      const list = await api('listSiapKeluar'); setSiapCache(list);
+      const hits = list.filter(r => norm(r.Kode) === code), docs = [];
+      hits.forEach(r => { if (docs.indexOf(r.NoDok) < 0) docs.push(r.NoDok); });
+      if (!docs.length) {
         let nama = ''; try { nama = (await lookup(code)).Nama; } catch (e) { throw new Error('Barcode "' + code + '" tidak dikenali.'); }
         beep(false); return say('bq', '<i class="bi bi-x-circle"></i> ' + esc(nama) + ' belum punya permintaan yang disetujui.', 'bad');
       }
       beep(true);
-      if (hits.length === 1) { say('bq', '<i class="bi bi-check-circle"></i> ' + esc(hits[0].NamaBarang) + ' · ' + esc(hits[0].Pemohon), 'ok'); window.__bcPre = hits[0].ID; return openKeluar(hits[0].ID); }
-      bcOpen('Pilih permintaan · ' + code, hits.map(r => '<div class="timeline-item align-items-center justify-content-between flex-wrap"><div><span class="mono">' + esc(r.NoDok) + '</span> · <b>' + esc(r.NamaBarang) + '</b> ' + fmt(r.Jumlah) + ' ' + esc(r.Satuan) + '<div class="text-3" style="font-size:12px">' + esc(r.Pemohon) + '</div></div><button type="button" class="btn-x btn-primary-x btn-sm-x" data-pick="' + esc(r.ID) + '">Keluarkan</button></div>').join(''),
+      const buka = nd => { window.__bcPre = { noDok: nd, kode: code }; return openKeluarDok(nd); };
+      if (docs.length === 1) { const h = AppState.cache.siap[docs[0]][0]; say('bq', '<i class="bi bi-check-circle"></i> ' + esc(hits[0].NamaBarang) + ' · ' + esc(docs[0]) + ' · ' + esc(h.Pemohon), 'ok'); return buka(docs[0]); }
+      bcOpen('Pilih dokumen permintaan · ' + code, docs.map(nd => { const g = AppState.cache.siap[nd], r = g.find(x => norm(x.Kode) === code); return '<div class="timeline-item align-items-center justify-content-between flex-wrap"><div><span class="mono">' + esc(nd) + '</span> · <b>' + esc(r.NamaBarang) + '</b> ' + fmt(r.Jumlah) + ' ' + esc(r.Satuan) + '<div class="text-3" style="font-size:12px">' + esc(r.Pemohon) + ' · ' + g.length + ' barang dalam dokumen</div></div><button type="button" class="btn-x btn-primary-x btn-sm-x" data-pick="' + esc(nd) + '">Keluarkan</button></div>'; }).join(''),
         '<button type="button" class="btn-x btn-ghost" data-bs-dismiss="modal">Tutup</button>');
       $('bcBody').addEventListener('click', e => {
         const b = e.target.closest('[data-pick]'); if (!b) return;
-        const id = b.dataset.pick;
-        $('bcModal').addEventListener('hidden.bs.modal', () => { window.__bcPre = id; openKeluar(id); }, { once: true });   // tunggu jendela ini benar-benar tertutup
+        const nd = b.dataset.pick;
+        $('bcModal').addEventListener('hidden.bs.modal', () => { buka(nd); }, { once: true });   // tunggu jendela ini benar-benar tertutup
         bcClose();
       });
     } catch (e) { beep(false); say('bq', '<i class="bi bi-x-circle"></i> ' + esc(e.message), 'bad'); }
   }
   function decorateKeluarPage() {
     const c = $('app-container'); if (!c || AppState.page !== 'keluar' || $('bcKeluarBar')) return;
-    c.insertAdjacentHTML('afterbegin', '<div id="bcKeluarBar" class="card-x mb-3"><div class="card-b"><div class="d-flex align-items-center justify-content-between mb-2"><b><i class="bi bi-upc-scan"></i> Scan cepat keluarkan barang</b><span class="text-3" style="font-size:12px">scan barang → permintaan disetujui terbuka otomatis</span></div>' + scanBox('bq') + '</div></div>');
+    c.insertAdjacentHTML('afterbegin', '<div id="bcKeluarBar" class="card-x mb-3"><div class="card-b"><div class="d-flex align-items-center justify-content-between mb-2"><b><i class="bi bi-upc-scan"></i> Scan cepat keluarkan barang</b><span class="text-3" style="font-size:12px">scan barang → dokumen permintaan yang disetujui terbuka otomatis</span></div>' + scanBox('bq') + '</div></div>');
     bindScan('bq', raw => enqueue(() => quickIssue(raw)));
   }
   const origKeluarPage = PAGES.keluar;
   PAGES.keluar = async function () { await origKeluarPage.apply(this, arguments); decorateKeluarPage(); };
-  const origOpenKeluar = window.openKeluar;
-  window.openKeluar = function (id) { origOpenKeluar.apply(this, arguments); decorateKeluarForm(id); };
+  const origOpenKeluarDok = window.openKeluarDok;
+  window.openKeluarDok = async function (noDok) { await origOpenKeluarDok.apply(this, arguments); decorateKeluarDok(noDok); };
 
   // ───────── Cetak bukti pengeluaran (tanpa PDF di iframe) ─────────
   function docHtml(d) {
     const r = (a, b) => '<tr><td style="padding:2px 10px 2px 0;color:#444;white-space:nowrap">' + a + '</td><td style="padding:2px 0">: <b>' + esc(b) + '</b></td></tr>';
     const sig = (t, n) => '<td style="text-align:center;width:33%;padding-top:8px">' + t + '<div style="height:60px"></div>(' + esc(n || '..............') + ')</td>';
+    const items = (d.items && d.items.length) ? d.items : [{ kode: d.kode, nama: d.nama, disiplin: d.disiplin, jumlah: d.jumlah, satuan: d.satuan }];
+    const baris = items.map((x, i) => '<tr><td style="text-align:center">' + (i + 1) + '</td><td>' + esc(x.kode) + '</td><td>' + esc(x.nama) + '</td><td>' + esc(x.disiplin) + '</td><td style="text-align:right"><b>' + fmt(x.jumlah) + ' ' + esc(x.satuan) + '</b></td></tr>').join('');
     return '<div class="bc-doc" style="background:#fff;color:#000;padding:16px;font-family:Arial,sans-serif;font-size:12px;line-height:1.35">' +
       '<table style="width:100%;border-collapse:collapse"><tr><td><div style="font-size:16px;font-weight:700">' + esc(d.appName) + '</div><div>' + esc(d.perusahaan) + '</div></td><td style="text-align:right;width:210px">' + svg128(d.noDok, { height: 36, width: '200' }) + '<div style="font:700 11px monospace">' + esc(d.noDok) + '</div></td></tr></table>' +
       '<hr style="border:0;border-top:2px solid #000;margin:8px 0"><div style="text-align:center;font-size:14px;font-weight:700;margin-bottom:8px">SURAT / BUKTI PENGELUARAN BARANG</div>' +
-      '<table>' + r('No. Dokumen', d.noDok) + r('Tanggal', d.tanggal) + r('Ref. Permintaan', d.noReq + ' (pemohon: ' + d.pemohon + ')') + r('Disetujui oleh', d.penyetuju + (d.waktuSetuju ? ' · ' + d.waktuSetuju : '')) + '</table>' +
-      '<table style="width:100%;border-collapse:collapse;margin-top:10px" border="1" cellpadding="6"><tr style="background:#e2e8f0"><th>Kode</th><th>Nama Barang</th><th>Disiplin</th><th>Jumlah</th></tr><tr><td>' + esc(d.kode) + '</td><td>' + esc(d.nama) + '</td><td>' + esc(d.disiplin) + '</td><td><b>' + fmt(d.jumlah) + ' ' + esc(d.satuan) + '</b></td></tr></table>' +
+      '<table>' + r('No. Dokumen', d.noDok) + r('Tanggal', d.tanggal) + r('Ref. Permintaan', d.noReq + ' (pemohon: ' + d.pemohon + ')') + r('Disetujui oleh', d.penyetuju + (d.waktuSetuju ? ' · ' + d.waktuSetuju : '')) + r('Jumlah barang', items.length + ' item') + '</table>' +
+      '<table style="width:100%;border-collapse:collapse;margin-top:10px" border="1" cellpadding="6"><tr style="background:#e2e8f0"><th style="width:36px">No</th><th>Kode</th><th>Nama Barang</th><th>Disiplin</th><th>Jumlah</th></tr>' + baris + '</table>' +
       '<p style="margin:8px 0">Keperluan: ' + esc(d.keperluan) + '</p>' +
       '<table style="width:100%;margin-top:14px"><tr>' + sig('Yang Mengeluarkan', d.pengeluar) + sig('Yang Menerima', d.penerima) + sig('Menyetujui', d.penyetuju) + '</tr></table></div>';
   }

@@ -1,4 +1,4 @@
-var SIM_VERSION = '2.0.0';
+var SIM_VERSION = '2.1.0';
 // Penampil error: bila ada kesalahan JS, tampil di layar (bukan loading tanpa akhir)
 function showBootError(e) {
   const o = document.getElementById('loadingOverlay');
@@ -77,7 +77,7 @@ function reqChip(s) { return `<span class="chip ${s === 'Ditolak' ? 'bad' : s ==
 const API_CACHE = new Map();
 let CACHE_VER = 0;
 const CACHE_TTL = 45000; // 45 detik
-const READ_FNS = new Set(['getDashboard', 'listBarang', 'listMasuk', 'listKeluar', 'listPermintaan', 'listLPB', 'getLaporan', 'listMaster', 'getConfig', 'listUsers', 'getLookups']);
+const READ_FNS = new Set(['getDashboard', 'listBarang', 'listMasuk', 'listKeluar', 'listPermintaan', 'listSiapKeluar', 'listLPB', 'getLaporan', 'listMaster', 'getConfig', 'listUsers', 'getLookups']);
 const NO_CLEAR = new Set(['searchBarang', 'getFileData', 'doLogout', 'healthCheck', 'findBarang', 'getBuktiData']);
 function clearApiCache() { API_CACHE.clear(); CACHE_VER++; }
 function netBar(d) { AppState.net = Math.max(0, (AppState.net || 0) + d); const b = $('netBar'); if (b) b.classList.toggle('on', AppState.net > 0); }
@@ -117,7 +117,7 @@ function prefetchPages() {
     try {
       const r = role();
       jobs.push(['listBarang', BF], ['listPermintaan', { status: PQ }]);
-      if (canEdit()) jobs.push(['listMasuk', MF], ['listKeluar', KF], ['listPermintaan', { status: 'Disetujui' }], ['listLPB'], ['listMaster', MT]);
+      if (canEdit()) jobs.push(['listMasuk', MF], ['listKeluar', KF], ['listSiapKeluar'], ['listLPB'], ['listMaster', MT]);
       if (r === 'admin' || r === 'pimpinan') jobs.push(['getLaporan', LR]);
       if (r === 'admin') jobs.push(['getConfig'], ['listUsers']);
     } catch (e) { return; }
@@ -293,13 +293,13 @@ window.addEventListener('load', bootApp);
 
 function renderLogin() {
   document.body.classList.add('logged-out');
-  const ok = isConfigured(), miss = missingFiles();
+  const prob = configProblem(), ok = !prob, miss = missingFiles();
   $('app-container').innerHTML = `
   <div class="login-wrap"><div class="login-card">
     <div class="logo" id="lgLogo"><i class="bi bi-box-seam"></i></div>
     <h2 class="text-center h4 mb-1" id="lgTitle">${esc(AppState.config.appName || 'SIM Gudang')}</h2>
     <p class="text-center text-3 mb-4" id="lgSub">Sistem Informasi Manajemen Gudang</p>
-    ${!ok ? '<div class="alert-x bad mb-3" id="lgCfg"><b>Alamat backend belum diisi.</b> Buka berkas <code>js/config.js</code>, tempel URL Apps Script (berakhiran <code>/exec</code>), lalu simpan dan push ke GitHub.</div>' : ''}
+    ${!ok ? '<div class="alert-x bad mb-3" id="lgCfg"><b>' + esc(prob.judul) + '</b> ' + esc(prob.detail) + (prob.nilai ? '<div class="mt-2" style="font-size:12px">Nilai yang terbaca di <code>js/config.js</code>:<br><code style="word-break:break-all">' + esc(prob.nilai) + '</code></div>' : '') + '</div>' : ''}
     ${miss.length ? '<div class="alert-x bad mb-3" id="lgMiss"><b>Berkas gagal dimuat:</b> ' + esc(miss.join(', ')) + '. Pastikan semua berkas ada di repository (huruf besar/kecil nama berkas harus sama), lalu muat ulang dengan Ctrl+Shift+R.</div>' : ''}
     <form onsubmit="handleLogin(event)" autocomplete="on">
       <div class="fld mb-3"><label for="lgUser">Username</label><input id="lgUser" class="form-control" autocomplete="username" required autofocus></div>

@@ -271,45 +271,97 @@ PAGES.keluar = async function () {
   <div id="keluarTable">${skel(3)}</div>`;
   await Promise.all([loadReady(), loadKeluar()]);
 };
+
+/** Simpan barang siap-keluar per dokumen permintaan (satu dokumen = satu kelompok = satu nomor BK). */
+function setSiapCache(rows) {
+  AppState.cache.siap = {}; AppState.cache.siapOrder = [];
+  AppState.cache.req = AppState.cache.req || {};
+  rows.forEach(r => {
+    if (!AppState.cache.siap[r.NoDok]) { AppState.cache.siap[r.NoDok] = []; AppState.cache.siapOrder.push(r.NoDok); }
+    AppState.cache.siap[r.NoDok].push(r); AppState.cache.req[r.ID] = r;
+  });
+}
 async function loadReady() {
   const el = $('readyList'); if (!el) return;
   try {
-    const rows = await api('listPermintaan', { status: 'Disetujui' });
-    AppState.cache.req = AppState.cache.req || {}; rows.forEach(r => AppState.cache.req[r.ID] = r);
-    el.innerHTML = rows.length ? rows.map(r => `<div class="timeline-item align-items-center justify-content-between flex-wrap">
-      <div><span class="mono">${esc(r.NoDok)}</span> · <b>${esc(r.NamaBarang)}</b> — ${fmt(r.Jumlah)} ${esc(r.Satuan)}<div class="text-3" style="font-size:12px">${esc(r.Pemohon)} · disetujui ${esc(r.Penyetuju)} · ${discTag(r.Disiplin)}</div></div>
-      <button class="btn-x btn-primary-x btn-sm-x" onclick="openKeluar('${esc(r.ID)}')"><i class="bi bi-box-arrow-up"></i> Keluarkan</button></div>`).join('') : emptyBox('bi-check2-all', 'Tidak ada permintaan yang menunggu dikeluarkan.');
+    setSiapCache(await api('listSiapKeluar'));
+    const order = AppState.cache.siapOrder;
+    el.innerHTML = order.length ? order.map(nd => {
+      const g = AppState.cache.siap[nd], h = g[0];
+      return `<div class="timeline-item" style="display:block" data-dok="${esc(nd)}">
+        <div class="d-flex align-items-start justify-content-between flex-wrap gap-2">
+          <div><span class="mono">${esc(nd)}</span> · <b>${g.length} barang</b><div class="text-3" style="font-size:12px">${esc(h.Pemohon)} · disetujui ${esc(h.Penyetuju)} · ${esc(h.Keperluan)}</div></div>
+          <button class="btn-x btn-primary-x btn-sm-x" onclick="openKeluarDok('${esc(nd)}')"><i class="bi bi-box-arrow-up"></i> Keluarkan${g.length > 1 ? ' (' + g.length + ' barang)' : ''}</button></div>
+        <ul class="mb-0 mt-2" style="font-size:13px;padding-left:18px">${g.map(r => `<li data-kode="${esc(r.Kode)}"><span class="mono">${esc(r.Kode)}</span> ${esc(r.NamaBarang)} — <b>${fmt(r.Jumlah)} ${esc(r.Satuan)}</b> ${discTag(r.Disiplin)}${Number(r.Stok) < Number(r.Jumlah) ? ` <span class="chip bad">stok ${fmt(r.Stok)}</span>` : ''}</li>`).join('')}</ul></div>`;
+    }).join('') : emptyBox('bi-check2-all', 'Tidak ada permintaan yang menunggu dikeluarkan.');
   } catch (e) { el.innerHTML = errBox(e); }
 }
-function openKeluar(id) {
-  const r = AppState.cache.req[id];
+
+/** Form keluar untuk satu dokumen permintaan: centang barang, isi penerima, satu nomor BK untuk semuanya. */
+async function openKeluarDok(noDok) {
+  if (!(AppState.cache.siap || {})[noDok]) { try { setSiapCache(await api('listSiapKeluar')); } catch (e) { return toast('Gagal', e.message, 'danger'); } }
+  const g = (AppState.cache.siap || {})[noDok];
+  if (!g || !g.length) return toast('Info', 'Dokumen ' + noDok + ' tidak punya barang yang siap dikeluarkan (mungkin sudah dikeluarkan).', 'warning');
+  const h = g[0], kurang = r => Number(r.Stok) < Number(r.Jumlah);
   openModal({
-    title: 'Keluarkan Barang · ' + r.NoDok,
-    body: `<div class="alert-x warn mb-3">${esc(r.NamaBarang)} — <b>${fmt(r.Jumlah)} ${esc(r.Satuan)}</b>. Stok akan berkurang dan bukti pengeluaran (PDF) dibuat.</div>
-      <div class="fld"><label for="kPen">Nama penerima barang *</label><input id="kPen" class="form-control" list="dlKar2" value="${esc(r.Pemohon)}"><datalist id="dlKar2">${AppState.lookups.karyawan.map(x => `<option value="${esc(x.nama)}">`).join('')}</datalist></div>`,
-    footer: `<button type="button" class="btn-x btn-ghost" data-bs-dismiss="modal">Batal</button><button type="button" class="btn-x btn-primary-x" id="kOk"><i class="bi bi-check2-circle"></i> Konfirmasi Keluar</button>`
+    title: 'Keluarkan Barang · ' + noDok, size: 'lg',
+    body: `<div class="text-3 mb-2" style="font-size:13px">${esc(h.Pemohon)} · disetujui ${esc(h.Penyetuju)}<br>Keperluan: ${esc(h.Keperluan)}</div>
+      <div class="table-wrap mb-3"><table class="tbl"><thead><tr><th style="width:36px"><input type="checkbox" id="kAll" class="form-check-input" aria-label="Pilih semua barang"></th><th>Barang</th><th class="r">Jumlah</th><th class="r">Stok</th></tr></thead><tbody>
+      ${g.map(r => `<tr data-id="${esc(r.ID)}" data-kode="${esc(r.Kode)}"><td><input type="checkbox" class="form-check-input kchk" ${kurang(r) ? 'disabled' : 'checked'} aria-label="Keluarkan ${esc(r.Kode)}"></td>
+        <td><span class="mono">${esc(r.Kode)}</span><div>${esc(r.NamaBarang)}</div><div class="kv-slot"></div></td>
+        <td class="r num nowrap"><b>${fmt(r.Jumlah)}</b> ${esc(r.Satuan)}</td>
+        <td class="r num nowrap" style="${kurang(r) ? 'color:var(--critical);font-weight:700' : ''}">${fmt(r.Stok)}${kurang(r) ? '<div style="font-size:11px">stok kurang</div>' : ''}</td></tr>`).join('')}</tbody></table></div>
+      <div class="alert-x warn mb-3" id="kInfo"></div>
+      <div class="fld"><label for="kPen">Nama penerima barang *</label><input id="kPen" class="form-control" list="dlKar2" value="${esc(h.Pemohon)}"><datalist id="dlKar2">${AppState.lookups.karyawan.map(x => `<option value="${esc(x.nama)}">`).join('')}</datalist></div>`,
+    footer: `<button type="button" class="btn-x btn-ghost" data-bs-dismiss="modal">Batal</button><button type="button" class="btn-x btn-primary-x" id="kOk"><i class="bi bi-check2-circle"></i> <span id="kOkTxt">Konfirmasi Keluar</span></button>`
   });
+  const chks = () => [].slice.call(document.querySelectorAll('#appModalBody .kchk'));
+  const upd = () => {
+    const n = chks().filter(c => c.checked).length, ok = $('kOk');
+    $('kOkTxt').textContent = 'Konfirmasi Keluar (' + n + ' barang)';
+    $('kInfo').innerHTML = n ? 'Stok akan berkurang dan <b>satu nomor BK</b> dengan <b>satu bukti cetak (' + n + ' barang)</b> dibuat.' : 'Centang minimal satu barang yang dikeluarkan.';
+    if (ok && !ok.dataset.locked) ok.disabled = n === 0;
+    const all = $('kAll'); const act = chks().filter(c => !c.disabled);
+    if (all) all.checked = act.length > 0 && act.every(c => c.checked);
+  };
+  document.querySelector('#appModalBody').addEventListener('change', e => {
+    if (e.target.id === 'kAll') chks().forEach(c => { if (!c.disabled) c.checked = e.target.checked; });
+    if (e.target.id === 'kAll' || e.target.classList.contains('kchk')) upd();
+  });
+  upd();
   $('kOk').onclick = e => withBtn(e.currentTarget, async () => {
-    const res = await api('eksekusiKeluar', { permintaanId: id, penerima: $('kPen').value });
-    closeModal(); toast('Berhasil', 'Barang keluar ' + res.noDok + ' tercatat.', 'success');
+    const ids = chks().filter(c => c.checked).map(c => c.closest('tr').dataset.id);
+    if (!ids.length) throw new Error('Centang minimal satu barang yang dikeluarkan.');
+    const res = await api('eksekusiKeluarMulti', { permintaanIds: ids, penerima: $('kPen').value });
+    closeModal(); toast('Berhasil', 'Barang keluar ' + res.noDok + ' tercatat (' + res.jumlahItem + ' barang).', 'success');
     PAGES.keluar();
     if (res.fileId) previewFile(res.fileId, 'Bukti Pengeluaran ' + res.noDok);
   });
 }
+/** Kompatibilitas: buka form keluar dari ID baris permintaan. */
+function openKeluar(id) {
+  const r = (AppState.cache.req || {})[id];
+  if (!r) return toast('Info', 'Permintaan tidak ditemukan. Muat ulang halaman.', 'warning');
+  return openKeluarDok(r.NoDok);
+}
+
 async function loadKeluar() {
   const el = $('keluarTable'); if (!el) return;
   try {
     const r = await api('listKeluar', KF);
-    el.innerHTML = r.rows.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>Tanggal</th><th>No. Dokumen</th><th>Barang</th><th class="r">Jumlah</th><th class="hide-sm">Pengeluar</th><th>Penerima</th><th>Bukti</th></tr></thead><tbody>
-      ${r.rows.map(x => `<tr><td class="nowrap num">${esc(x.Tanggal)}</td><td class="mono nowrap">${esc(x.NoDok)}<div class="text-3" style="font-size:11px">${esc(x.NoReq)}</div></td><td>${esc(x.NamaBarang)}<div>${discTag(x.Disiplin)}</div></td>
-      <td class="r num nowrap"><b>${fmt(x.Jumlah)}</b> ${esc(x.Satuan)}</td><td class="hide-sm">${esc(x.Pengeluar)}</td><td>${esc(x.Penerima)}</td>
-      <td><button class="link-btn" onclick="lihatBukti('${esc(x.ID)}','${esc(x.NoDok)}')"><i class="bi bi-printer"></i> Cetak</button></td></tr>`).join('')}</tbody></table></div>
-      <div class="pager"><span>Menampilkan ${r.rows.length} dari ${fmt(r.total)} data</span></div>` : emptyBox('bi-inbox', 'Belum ada barang keluar.');
+    const grup = {}, order = [];
+    r.rows.forEach(x => { if (!grup[x.NoDok]) { grup[x.NoDok] = []; order.push(x.NoDok); } grup[x.NoDok].push(x); });
+    el.innerHTML = order.length ? `<div class="table-wrap"><table class="tbl"><thead><tr><th>Tanggal</th><th>No. Dokumen</th><th>Barang</th><th class="hide-sm">Pengeluar</th><th>Penerima</th><th>Bukti</th></tr></thead><tbody>
+      ${order.map(nd => { const g = grup[nd], h = g[0]; return `<tr><td class="nowrap num">${esc(h.Tanggal)}</td><td class="mono nowrap">${esc(nd)}<div class="text-3" style="font-size:11px">${esc(h.NoReq)}</div>${g.length > 1 ? `<div><span class="chip info">${g.length} barang</span></div>` : ''}</td>
+      <td>${g.map(x => `<div>${esc(x.NamaBarang)} — <b class="num">${fmt(x.Jumlah)} ${esc(x.Satuan)}</b> ${discTag(x.Disiplin)}</div>`).join('')}</td><td class="hide-sm">${esc(h.Pengeluar)}</td><td>${esc(h.Penerima)}</td>
+      <td><button class="link-btn" onclick="lihatBukti('${esc(h.ID)}','${esc(nd)}')"><i class="bi bi-printer"></i> Cetak</button></td></tr>`; }).join('')}</tbody></table></div>
+      <div class="pager"><span>Menampilkan ${order.length} bukti (${r.rows.length} barang dari ${fmt(r.total)})</span></div>` : emptyBox('bi-inbox', 'Belum ada barang keluar.');
   } catch (e) { el.innerHTML = errBox(e); }
 }
 async function lihatBukti(id, no) {
   try { const r = await api('cetakBukti', id); previewFile(r.fileId, 'Bukti Pengeluaran ' + no); } catch (e) { toast('Gagal', e.message, 'danger'); }
 }
+
 
 // ════════════════════════════════════════════════════════
 // BAGIAN 10: LPB (PENCOCOKAN STOK FISIK)

@@ -71,6 +71,12 @@ Buka alamat itu. Di bawah tombol Masuk harus tampil **"Server terhubung"** berwa
 ---
 
 ## C. Pembaruan berikutnya
+
+**Versi 2.1 (Barang Keluar multi-item)** mengubah backend dan frontend, jadi lakukan keduanya:
+1. Backend: tempel `Kode.gs` baru di Apps Script, lalu **Deploy → Manage deployments → pensil → New version → Deploy** (alamat `/exec` tidak berubah).
+2. Frontend: ganti `js/pages-1.js`, `js/barcode.js`, `js/core.js`, dan `index.html` (atau ekstrak ulang ZIP), lalu push. Layar login harus menampilkan `v2.1.0` dan "Server terhubung · v2.1".
+
+Cara push untuk pembaruan apa pun:
 Setelah mengubah berkas di folder:
 ```
 git add .

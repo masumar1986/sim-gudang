@@ -29,3 +29,7 @@ Langkah lengkap ada di `PANDUAN-INSTALASI.md`.
 - Tidak ada kata sandi atau kunci rahasia di repository ini. Data tetap terlindungi login.
 - Jalur berkas memakai alamat relatif, jadi situs berjalan di subfolder `https://USERNAME.github.io/NAMA-REPO/`.
 - Setelah mengubah berkas, naikkan nomor `?v=` pada `index.html` bila browser masih memuat versi lama.
+
+## Catatan versi
+- **2.1.0:** Barang Keluar multi-item. Satu dokumen permintaan menjadi satu transaksi keluar dengan satu nomor BK dan satu bukti cetak yang memuat semua barang (barang bisa dicentang sebagian; bila stok salah satu barang kurang, tidak ada stok yang dipotong). Verifikasi barcode kini per barang.
+- **2.0.0:** Migrasi ke GitHub Pages + Google Apps Script REST API.
